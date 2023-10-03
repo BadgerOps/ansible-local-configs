@@ -1,0 +1,4 @@
+vars/
+ansible.cfg
+hosts
+inventory.yaml
