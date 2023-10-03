@@ -1,0 +1,59 @@
+---
+- name: Deploy Pi-hole using Podman
+  hosts: "*"
+  become: yes
+  tasks:
+    - include_vars: ../vars/pihole.yaml
+    - name: Check if Pi-hole container exists
+      command: podman ps -a --filter name=pihole --format "{{ '{{.Names}}' }}"
+      register: pihole_container
+      changed_when: false
+
+    - name: Run Pi-hole container
+      command:
+        cmd: >
+          podman run -d --name pihole
+          -p 9980:80
+          -p 9943:443
+          -p 53:53/tcp
+          -p 53:53/udp
+          -e TZ={{ TIMEZONE }}
+          -e WEBPASSWORD="{{ PIHOLEPASS }}"
+          -e SERVERIP={{ SERVERIP }}
+          -e DNS1={{ DNS1 }}
+          -e DNS2={{ DNS2 }}
+          -e DNSSEC=true
+          -e REV_SERVER=true
+          -e REV_SERVER_TARGET={{ ROUTERIP }}
+          -e REV_SERVER_CIDR={{ NETWORKCIDR }}
+          -e REV_SERVER_DOMAIN={{ DOMAIN }}
+          --restart=always
+          pihole/pihole:latest
+      register: podman_output
+      changed_when: "'Created container' in podman_output.stdout"
+      when: pihole_container.stdout != "pihole"
+
+    - name: Create pihole unit file
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/pihole.service
+        content: |
+          [Unit]
+          Description=Pi-hole Podman container
+          Wants=syslog.service
+          [Service]
+          Restart=always
+          ExecStart=/usr/bin/podman start -a pihole
+          ExecStop=/usr/bin/podman stop -t 10 pihole
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Reload systemd to ensure new system file is picked up
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Ensure pihole is enabled and started
+      ansible.builtin.systemd:
+        name: pihole
+        state: started
+        enabled: true
+        masked: no
