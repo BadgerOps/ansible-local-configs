@@ -1,0 +1,53 @@
+---
+- name: Manage FreeBSD bhyve VMs
+  hosts: megatron
+  gather_facts: no
+  become: yes
+
+  vars:
+    vm_list:
+      - name: k3s01
+        ram: 4G
+        cpus: 2
+        iso_path: /zstor/vm/.iso/k3os-amd64.iso
+      - name: k3s02
+        ram: 4G
+        cpus: 2
+        iso_path: /zstor/vm/.iso/k3os-amd64.iso
+      - name: k3s03
+        ram: 4G
+        cpus: 2
+        iso_path: /zstor/vm/.iso/k3os-amd64.iso
+
+  tasks:
+    - name: Create ZFS Datasets
+      zfs:
+        name: "{{ item.name }}"
+        state: present
+        mountpoint: "/zstor/vm/{{ item.name }}"
+      with_items: "{{ vm_list }}"
+
+    - name: Start VMs
+      command: >
+        bhyve -c {{ item.cpus }} -m {{ item.ram }} -A -H -P
+        -s 0:0,hostbridge -s 1:0,virtio-net,vm_if
+        -s 2:0,virtio-blk,/zstor/vm/{{ item.name }}/disk0
+        -l com1,stdio -W {{ item.name }} {{ item.name }} -s 31,lpc
+      with_items: "{{ vm_list }}"
+      async: 600
+
+    - name: Wait for VMs to complete
+      async_status:
+        jid: "{{ item.ansible_job_id }}"
+      with_items: "{{ vm_list }}"
+      register: job_result
+      until: job_result.finished
+      retries: 600
+      delay: 10
+
+    - name: Enable and Start VM Services
+      service:
+        name: "{{ item.name }}"
+        enabled: yes
+        state: started
+      with_items: "{{ vm_list }}"
